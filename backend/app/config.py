@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # Groq
     groq_api_key: str = ""
 
-    # RapidAPI (Scraper Tech Google Maps)
-    rapidapi_key: str = ""
+    # Scraper Tech - Google Maps
+    map_scraper: str = ""
 
     # Apify (Facebook Pages)
     apify_token: str = ""
