@@ -1,9 +1,17 @@
+import os
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
+from sqlmodel import SQLModel
+
+from app.models.db import Business, ScrapeJob  # noqa: F401 — registers models with metadata
+
+# Load .env file so DATABASE_URL is available
+load_dotenv()
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -16,9 +24,14 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = SQLModel.metadata
+
+# Override sqlalchemy.url from DATABASE_URL env var
+# Alembic needs sync driver, so we strip +asyncpg
+database_url = os.getenv("DATABASE_URL", "")
+if database_url:
+    sync_url = database_url.replace("+asyncpg", "")
+    config.set_main_option("sqlalchemy.url", sync_url)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

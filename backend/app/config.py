@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Database
-    database_url: str = "postgresql+asyncpg://pronexus:pronexus@localhost:5432/pronexus"
+    database_url: str
 
     # Groq
     groq_api_key: str = ""
