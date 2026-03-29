@@ -54,3 +54,17 @@ class EnrichResponse(BaseModel):
     email: str | None = None
     email_type: str | None = None
     email_source: str | None = None
+
+
+class JobResponse(BaseModel):
+    id: uuid.UUID
+    search_query: str
+    status: str
+    results_count: int
+    last_run_at: datetime | None = None
+    created_at: datetime
+
+
+class JobWithBusinessesResponse(BaseModel):
+    job: JobResponse
+    businesses: list[BusinessResponse]

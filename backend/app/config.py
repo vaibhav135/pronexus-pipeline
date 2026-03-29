@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Facebook supplement
     apify_token: str = ""
 
+    # CORS
+    cors_origins: str = "http://localhost:3000"
+
     # Pipeline config
     pipeline_batch_size: int = 50
     pipeline_sleep_seconds: float = 2.0
