@@ -65,6 +65,16 @@ class JobResponse(BaseModel):
     created_at: datetime
 
 
+class BusinessWithEnrichment(BaseModel):
+    business: BusinessResponse
+    owner_name: str | None = None
+    owner_source: str | None = None
+    email: str | None = None
+    email_type: str | None = None
+    email_source: str | None = None
+    is_enriched: bool = False
+
+
 class JobWithBusinessesResponse(BaseModel):
     job: JobResponse
-    businesses: list[BusinessResponse]
+    businesses: list[BusinessWithEnrichment]
