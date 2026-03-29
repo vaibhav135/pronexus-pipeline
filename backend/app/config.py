@@ -7,32 +7,37 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # Groq
+    # LLM — Groq (owner extraction)
     groq_api_key: str = ""
+    groq_model: str = "llama-3.1-8b-instant"
 
-    # Scraper Tech - Google Maps
+    # Discovery — Scraper Tech Google Maps
     map_scraper: str = ""
 
-    # Apify (Facebook Pages)
-    apify_token: str = ""
+    # Search fallback — Tavily (1,000 free/month, resets)
+    tavily_api_key: str = ""
 
-    # Outscraper
+    # Search fallback — Exa (1,000 one-time credits)
+    exa_api_key: str = ""
+
+    # Website scraping — Jina Reader
+    jina_ai_api_key: str = ""
+
+    # Future — residential proxy for Google search
+    dataimpulse_proxy_url: str = ""
+
+    # Email finding
     outscraper_api_key: str = ""
-
-    # Serper
-    serper_api_key: str = ""
-
-    # Prospeo
     prospeo_api_key: str = ""
-
-    # Hunter.io
     hunter_api_key: str = ""
+
+    # Facebook supplement
+    apify_token: str = ""
 
     # Pipeline config
     pipeline_batch_size: int = 50
     pipeline_sleep_seconds: float = 2.0
     max_subpages_to_crawl: int = 20
-    groq_model: str = "openai/gpt-oss-20b"
     log_level: str = "INFO"
 
 
