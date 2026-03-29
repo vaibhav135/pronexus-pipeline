@@ -42,13 +42,15 @@ class SearchResponse(BaseModel):
     businesses: list[BusinessResponse]
 
 
-class OwnerIdentifyRequest(BaseModel):
+class EnrichRequest(BaseModel):
     business_id: uuid.UUID
 
 
-class OwnerResponse(BaseModel):
+class EnrichResponse(BaseModel):
     business_id: uuid.UUID
     business_name: str
     owner_name: str | None = None
-    source: str | None = None
-    confidence: str | None = None
+    owner_source: str | None = None
+    email: str | None = None
+    email_type: str | None = None
+    email_source: str | None = None

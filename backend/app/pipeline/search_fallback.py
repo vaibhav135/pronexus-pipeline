@@ -1,14 +1,29 @@
+"""
+Search fallback — Tavily → Exa waterfall.
+Extracts both owner name and emails from search results.
+"""
+from dataclasses import dataclass, field
+
 import httpx
 from loguru import logger
 
 from app.config import settings
-from app.pipeline.owner_id import _extract_name_with_groq
+from app.pipeline.owner_id import extract_owner_name
+from app.pipeline.website_scraper import _extract_emails
 
 SEARCH_QUERY_TEMPLATE = 'who is the owner of "{name}" {city} {state}'
 
 
+@dataclass
+class SearchResult:
+    owner_name: str | None = None
+    owner_source: str | None = None
+    emails: list[str] = field(default_factory=list)
+    email_source: str | None = None
+
+
 async def _search_tavily(query: str) -> str | None:
-    """Search using Tavily API. Returns search result text or None."""
+    """Search using Tavily API. Returns combined result text or None."""
     if not settings.tavily_api_key:
         return None
 
@@ -26,7 +41,6 @@ async def _search_tavily(query: str) -> str | None:
             r.raise_for_status()
             data = r.json()
 
-        # Collect answer + result snippets
         parts = []
         if data.get("answer"):
             parts.append(data["answer"])
@@ -43,7 +57,7 @@ async def _search_tavily(query: str) -> str | None:
 
 
 async def _search_exa(query: str) -> str | None:
-    """Search using Exa API. Returns search result text or None."""
+    """Search using Exa API. Returns combined result text or None."""
     if not settings.exa_api_key:
         return None
 
@@ -83,14 +97,48 @@ async def _search_exa(query: str) -> str | None:
         return None
 
 
+def _extract_from_search_text(
+    text: str,
+    business_name: str,
+    source_name: str,
+) -> SearchResult:
+    """Extract both owner name and emails from search result text."""
+    result = SearchResult()
+
+    owner = extract_owner_name(text, business_name)
+    if owner:
+        result.owner_name = owner
+        result.owner_source = f"{source_name}_search"
+
+    emails = _extract_emails(text)
+    if emails:
+        result.emails = emails
+        result.email_source = f"{source_name}_search"
+
+    return result
+
+
 async def search_for_owner(
     business_name: str,
     city: str | None = None,
     state: str | None = None,
 ) -> tuple[str | None, str | None]:
     """
-    Search fallback waterfall: Tavily → Exa.
+    Search fallback for owner name only.
     Returns (owner_name, source) or (None, None).
+    """
+    result = await search_for_owner_and_email(business_name, city, state)
+    return result.owner_name, result.owner_source
+
+
+async def search_for_owner_and_email(
+    business_name: str,
+    city: str | None = None,
+    state: str | None = None,
+) -> SearchResult:
+    """
+    Search fallback waterfall: Tavily → Exa.
+    Extracts both owner name and emails from results.
     """
     query = SEARCH_QUERY_TEMPLATE.format(
         name=business_name,
@@ -98,20 +146,34 @@ async def search_for_owner(
         state=state or "",
     ).strip()
 
+    combined = SearchResult()
+
     # 1. Tavily
     tavily_text = await _search_tavily(query)
     if tavily_text:
-        name = _extract_name_with_groq(tavily_text, business_name)
-        if name:
-            logger.info(f"Owner found via Tavily: {name}")
-            return name, "tavily_search"
+        tavily_result = _extract_from_search_text(tavily_text, business_name, "tavily")
+        if tavily_result.owner_name:
+            combined.owner_name = tavily_result.owner_name
+            combined.owner_source = tavily_result.owner_source
+            logger.info(f"Owner found via Tavily: {combined.owner_name}")
+        if tavily_result.emails:
+            combined.emails = tavily_result.emails
+            combined.email_source = tavily_result.email_source
 
-    # 2. Exa
+    # If we have both, we're done
+    if combined.owner_name and combined.emails:
+        return combined
+
+    # 2. Exa — only search if still missing something
     exa_text = await _search_exa(query)
     if exa_text:
-        name = _extract_name_with_groq(exa_text, business_name)
-        if name:
-            logger.info(f"Owner found via Exa: {name}")
-            return name, "exa_search"
+        exa_result = _extract_from_search_text(exa_text, business_name, "exa")
+        if not combined.owner_name and exa_result.owner_name:
+            combined.owner_name = exa_result.owner_name
+            combined.owner_source = exa_result.owner_source
+            logger.info(f"Owner found via Exa: {combined.owner_name}")
+        if not combined.emails and exa_result.emails:
+            combined.emails = exa_result.emails
+            combined.email_source = exa_result.email_source
 
-    return None, None
+    return combined

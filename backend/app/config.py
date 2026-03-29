@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     # Email finding
     outscraper_api_key: str = ""
     prospeo_api_key: str = ""
-    hunter_api_key: str = ""
 
     # Facebook supplement
     apify_token: str = ""

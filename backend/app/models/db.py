@@ -56,6 +56,19 @@ class Owner(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))
 
 
+class Email(SQLModel, table=True):
+    __tablename__ = "emails"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    business_id: uuid.UUID = Field(foreign_key="businesses.id", index=True)
+    email: str = Field(max_length=500)
+    email_type: str | None = Field(default=None, max_length=50)  # "personal" | "generic" | "pattern_constructed"
+    verification_status: str | None = Field(default=None, max_length=50)  # "verified" | "unverified"
+    source: str | None = Field(default=None, max_length=50)  # "website" | "tavily_search" | "exa_search" | "prospeo" | "hunter"
+    is_primary: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))
+
+
 class ScrapeJob(SQLModel, table=True):
     __tablename__ = "scrape_jobs"
 
