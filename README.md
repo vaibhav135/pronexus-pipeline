@@ -10,32 +10,39 @@ Automated pipeline to discover blue-collar businesses (HVAC, plumbers, electrici
 - [Getting Started](#getting-started)
 - [Project Structure](#project-structure)
 - [API Endpoints](#api-endpoints)
+- [Frontend](#frontend)
 - [Research & Decisions](#research--decisions)
 - [Cost Model](#cost-model)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    PIPELINE WORKER                       │
-│                  (Python, FastAPI, uv)                   │
-│                                                         │
-│  ┌──────────┐   ┌───────────┐   ┌───────────────────┐  │
-│  │  Step 1  │   │  Step 2   │   │      Step 3       │  │
-│  │Discovery │──▶│ Owner ID  │──▶│  Email Finding     │  │
-│  └──────────┘   └───────────┘   └───────────────────┘  │
-│       │               │                   │             │
-│       ▼               ▼                   ▼             │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │               PostgreSQL Database               │    │
-│  └─────────────────────────────────────────────────┘    │
-│                                                         │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │         FastAPI — Status & Monitoring API        │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-                        │
-                  Railway.app
+┌──────────────────────────────────────────────────────┐
+│              FRONTEND (Next.js + Bun)                │
+│                                                      │
+│  Search Bar ──▶ Results Table ──▶ Export (CSV/PDF/DOCX)
+│       │              ▲                               │
+│       │              │ SSE (real-time updates)        │
+│       ▼              │                               │
+└──────────────────────┼───────────────────────────────┘
+                       │
+              HTTP / SSE (CORS)
+                       │
+┌──────────────────────┼───────────────────────────────┐
+│              BACKEND (FastAPI + Python)               │
+│                                                      │
+│  ┌──────────┐   ┌───────────┐   ┌─────────────────┐ │
+│  │  Step 1  │   │  Step 2   │   │     Step 3      │ │
+│  │Discovery │──▶│ Owner ID  │──▶│  Email Finding   │ │
+│  └──────────┘   └───────────┘   └─────────────────┘ │
+│       │               │                │             │
+│       ▼               ▼                ▼             │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │              PostgreSQL Database                │ │
+│  └─────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+                       │
+                 Railway.app
 ```
 
 ## Pipeline Steps
@@ -90,6 +97,8 @@ Scrapling's `StealthyFetcher` + DataImpulse residential proxy successfully bypas
 
 ## Tech Stack
 
+### Backend
+
 | Layer | Tool | Why |
 |---|---|---|
 | Language | Python 3.12 | Ecosystem fit |
@@ -107,18 +116,48 @@ Scrapling's `StealthyFetcher` + DataImpulse residential proxy successfully bypas
 | Containerization | Docker | Local dev + Railway deploy |
 | Hosting | Railway.app | Managed Postgres, 24/7 worker |
 
+### Frontend
+
+| Layer | Tool | Why |
+|---|---|---|
+| Framework | Next.js 16 (App Router) | React, SSR, file-based routing |
+| Runtime | Bun | Fast installs, fast dev server |
+| Styling | Tailwind CSS v4 | Utility-first, custom design tokens |
+| Components | shadcn/ui (Radix) | Copy-paste, full control |
+| Forms | react-hook-form + zod | Validation, type safety |
+| Data fetching | @tanstack/react-query | Caching, mutations, server state |
+| Icons | lucide-react | Consistent icon set |
+| PDF export | jsPDF + jspdf-autotable | Client-side PDF generation |
+| DOCX export | docx + file-saver | Client-side Word document generation |
+
+### Design System (Light Theme)
+
+| Token | Color | Usage |
+|---|---|---|
+| `primary` | `#4F46E5` (Indigo) | Buttons, CTAs, focus rings |
+| `secondary` | `#06B6D4` (Teal) | Links, accents |
+| `background` | `#FAFBFC` | Page background |
+| `surface` | `#FFFFFF` | Cards, table background |
+| `success` | `#10B981` | Enriched, verified |
+| `warning` | `#F59E0B` | In-progress states |
+| `error` | `#EF4444` | Failed states |
+| `text` | `#1A1A2E` | Primary text |
+| `text-muted` | `#6B7280` | Secondary text |
+
+All colors are available as Tailwind classes (`bg-primary`, `text-text-muted`, etc.) — no raw hex codes in components.
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
+- [Bun](https://bun.sh/)
 - Docker (for local PostgreSQL)
 
-### Setup
+### Backend Setup
 
 ```bash
-# Clone and enter backend
 cd backend
 
 # Install dependencies
@@ -132,11 +171,25 @@ cp .env.example .env
 docker-compose up -d
 
 # Run migrations
-uv run python -m alembic upgrade head
+uv run alembic upgrade head
 
-# Start the server
-uv run uvicorn app.main:app --reload
+# Start the server (runs on http://localhost:8000)
+uv run fastapi dev app/main.py
 ```
+
+### Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies
+bun install
+
+# Start dev server (runs on http://localhost:3000)
+bun dev
+```
+
+The frontend connects to the backend at `http://localhost:8000` by default. Override with `NEXT_PUBLIC_API_URL` env var.
 
 ### Required API Keys
 
@@ -149,40 +202,76 @@ uv run uvicorn app.main:app --reload
 | `JINA_AI_API_KEY` | [jina.ai](https://jina.ai) | 10M free tokens |
 | `PROSPEO_API_KEY` | [prospeo.io](https://prospeo.io) | Pay per valid result ($0.0074/email) |
 
+### Environment Variables
+
+Backend (`backend/.env`):
+
+| Variable | Description | Default |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `CORS_ORIGINS` | Comma-separated allowed origins | `http://localhost:3000` |
+| `GROQ_API_KEY` | Groq LLM API key | — |
+| `MAP_SCRAPER` | Scraper Tech API key | — |
+| `TAVILY_API_KEY` | Tavily search API key | — |
+| `EXA_API_KEY` | Exa search API key | — |
+| `JINA_AI_API_KEY` | Jina Reader API key | — |
+| `PROSPEO_API_KEY` | Prospeo email finder API key | — |
+
+Frontend (`frontend/.env.local`):
+
+| Variable | Description | Default |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:8000` |
+
 ## Project Structure
 
 ```
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                # FastAPI app + health check
-│   ├── config.py              # Settings from env vars
-│   ├── database.py            # Async SQLModel engine + session
-│   │
-│   ├── models/
-│   │   └── db.py              # SQLModel tables (Business, Owner, Email, ScrapeJob)
-│   │
-│   ├── api/
-│   │   ├── routes.py          # API routes (/search, /enrich)
-│   │   └── schemas.py         # Pydantic request/response schemas
-│   │
-│   ├── pipeline/
-│   │   ├── discovery.py       # Step 1: Google Maps scraping
-│   │   ├── website_scraper.py # Website scraping (httpx + Jina Reader)
-│   │   ├── owner_id.py        # Owner name extraction (Groq LLM)
-│   │   ├── search_fallback.py # Tavily → Exa search waterfall
-│   │   └── email_finder.py    # Prospeo email fallback
-│   │
-│   └── utils/
-│       └── __init__.py
+pronexus-pipeline/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                # FastAPI app, CORS, health check
+│   │   ├── config.py              # Settings from env vars
+│   │   ├── database.py            # Async SQLModel engine + session
+│   │   ├── models/
+│   │   │   └── db.py              # SQLModel tables (Business, Owner, Email, ScrapeJob)
+│   │   ├── api/
+│   │   │   ├── routes.py          # API routes (search, enrich, jobs, SSE stream)
+│   │   │   └── schemas.py         # Pydantic request/response schemas
+│   │   └── pipeline/
+│   │       ├── discovery.py       # Step 1: Google Maps scraping
+│   │       ├── website_scraper.py # Website scraping (httpx + Jina Reader)
+│   │       ├── owner_id.py        # Owner name extraction (Groq LLM)
+│   │       ├── search_fallback.py # Tavily → Exa search waterfall
+│   │       └── email_finder.py    # Prospeo email fallback
+│   ├── alembic/                   # Database migrations
+│   ├── scripts/                   # Test scripts
+│   ├── docker-compose.yml         # Local PostgreSQL
+│   └── pyproject.toml
 │
-├── alembic/                   # Database migrations
-├── scripts/
-│   ├── test_discovery.py      # Discovery service test
-│   └── test_owner_id.py       # Owner ID pipeline test
-├── docker-compose.yml         # Local PostgreSQL
-├── pyproject.toml
-└── .env.example
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── globals.css        # Design system tokens + Tailwind config
+│   │   │   ├── layout.tsx         # Root layout with QueryProvider
+│   │   │   ├── page.tsx           # Home: search bar + recent searches
+│   │   │   └── search/[id]/
+│   │   │       └── page.tsx       # Results: table + auto-enrich + export
+│   │   ├── components/
+│   │   │   ├── search-bar.tsx     # Search form (react-hook-form + zod)
+│   │   │   ├── job-card.tsx       # Search history cards
+│   │   │   ├── results-table.tsx  # Business data table with live updates
+│   │   │   ├── export-menu.tsx    # CSV, PDF, DOCX export
+│   │   │   └── ui/               # shadcn/ui components
+│   │   └── lib/
+│   │       ├── api.ts             # React Query hooks + SSE client
+│   │       ├── types.ts           # TypeScript types (mirrors backend schemas)
+│   │       ├── schemas.ts         # Zod form validation schemas
+│   │       ├── query-provider.tsx # React Query provider
+│   │       └── utils.ts           # shadcn utility
+│   ├── package.json
+│   └── bun.lock
+│
+└── README.md
 ```
 
 ## API Endpoints
@@ -191,7 +280,10 @@ backend/
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `POST` | `/api/search` | Search Google Maps, store businesses |
-| `POST` | `/api/enrich` | Run full pipeline on a business (owner + email) |
+| `POST` | `/api/enrich` | Run full pipeline on a single business |
+| `GET` | `/api/jobs` | List all search jobs (most recent first) |
+| `GET` | `/api/jobs/{id}` | Get a job with its businesses |
+| `GET` | `/api/jobs/{id}/enrich-stream` | SSE: enrich all businesses, stream results |
 
 ### POST /api/search
 
@@ -236,7 +328,68 @@ Returns:
 }
 ```
 
-Pipeline: scrape website → extract owner + emails → search fallback (Tavily → Exa) → Prospeo email fallback → store results.
+### GET /api/jobs
+
+List all search jobs, most recent first (limit 50).
+
+```json
+[
+  {
+    "id": "uuid",
+    "search_query": "HVAC contractor Houston TX",
+    "status": "completed",
+    "results_count": 20,
+    "last_run_at": "2026-03-29T10:30:00Z",
+    "created_at": "2026-03-29T10:30:00Z"
+  }
+]
+```
+
+### GET /api/jobs/{id}
+
+Get a single job with all its businesses.
+
+```json
+{
+  "job": { "id": "...", "search_query": "...", "status": "completed", "results_count": 20, "..." : "..." },
+  "businesses": [ { "id": "...", "name": "...", "..." : "..." } ]
+}
+```
+
+### GET /api/jobs/{id}/enrich-stream
+
+SSE endpoint that enriches all businesses for a job and streams results in real-time.
+
+**Event types:**
+
+| Event | Data | Description |
+|---|---|---|
+| `result` | `EnrichResponse` | A business was successfully enriched |
+| `progress` | `{ completed, total }` | Progress update |
+| `error` | `{ business_id, business_name, error }` | Enrichment failed for one business |
+| `done` | `{ message }` | All businesses processed |
+
+The frontend automatically connects to this endpoint when navigating to a search results page. Each business is enriched sequentially — already-enriched businesses return cached results.
+
+## Frontend
+
+### Pages
+
+**Home (`/`)** — Search bar with advanced options (result limit, lat/lng), list of recent searches as clickable cards.
+
+**Results (`/search/[id]`)** — Data table showing all businesses from a search. Enrichment starts automatically via SSE. Rows update in real-time as owner names and emails are found. Export to CSV, PDF, or DOCX at any time.
+
+### Features
+
+- Real-time enrichment via Server-Sent Events (SSE)
+- Auto-enrich on page load — no manual trigger needed
+- Stop/resume enrichment at any time
+- Retry failed enrichments
+- Export results as CSV, PDF, or DOCX
+- Advanced search options (result limit, coordinates)
+- Source badges on owner names and emails (Website, Search, Prospeo)
+- Verified business indicators
+- Responsive table with loading skeletons
 
 ## Research & Decisions
 
