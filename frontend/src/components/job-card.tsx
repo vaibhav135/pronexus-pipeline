@@ -14,7 +14,7 @@ import {
   ChevronRight,
   Building2,
 } from "lucide-react";
-import type { SearchJob, JobStatus } from "@/lib/types";
+import type { JobResponse, JobStatus } from "@/lib/types";
 
 const STATUS_CONFIG: Record<
   JobStatus,
@@ -45,7 +45,7 @@ function formatDate(iso: string) {
 }
 
 interface JobCardProps {
-  job: SearchJob;
+  job: JobResponse;
 }
 
 export function JobCard({ job }: JobCardProps) {
@@ -53,7 +53,7 @@ export function JobCard({ job }: JobCardProps) {
   const Icon = config.icon;
 
   return (
-    <Link href={`/search/${job.jobId}`}>
+    <Link href={`/search/${job.id}`}>
       <Card className="group hover:border-primary/30 hover:shadow-md hover:shadow-primary/5 transition-all cursor-pointer">
         <CardHeader className="flex flex-row items-center justify-between gap-4 py-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -62,16 +62,19 @@ export function JobCard({ job }: JobCardProps) {
             </div>
             <div className="space-y-0.5 min-w-0">
               <CardTitle className="text-sm font-medium truncate">
-                {job.query}
+                {job.search_query}
               </CardTitle>
               <CardDescription className="text-xs text-text-muted">
-                {formatDate(job.createdAt)} &middot; {job.resultsCount}{" "}
+                {formatDate(job.created_at)} &middot; {job.results_count}{" "}
                 businesses
               </CardDescription>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Badge variant="outline" className={`text-xs gap-1 ${config.style}`}>
+            <Badge
+              variant="outline"
+              className={`text-xs gap-1 ${config.style}`}
+            >
               <Icon
                 className={`h-3 w-3 ${job.status === "running" ? "animate-spin" : ""}`}
               />

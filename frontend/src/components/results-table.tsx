@@ -46,13 +46,14 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const SOURCE_STYLES: Record<string, string> = {
-  website_httpx: "bg-primary/10 text-primary border-primary/30",
-  website_jina: "bg-primary/10 text-primary border-primary/30",
-  tavily_search: "bg-secondary/10 text-secondary border-secondary/30",
-  exa_search: "bg-secondary/10 text-secondary border-secondary/30",
-  prospeo: "bg-warning/10 text-warning border-warning/30",
-  hunter: "bg-warning/10 text-warning border-warning/30",
+const SOURCE_CONFIG: Record<string, { label: string; style: string }> = {
+  website_httpx: { label: "Website", style: "bg-primary/10 text-primary border-primary/30" },
+  website_jina: { label: "Website", style: "bg-primary/10 text-primary border-primary/30" },
+  website: { label: "Website", style: "bg-primary/10 text-primary border-primary/30" },
+  tavily_search: { label: "Search", style: "bg-secondary/10 text-secondary border-secondary/30" },
+  exa_search: { label: "Search", style: "bg-secondary/10 text-secondary border-secondary/30" },
+  prospeo: { label: "Prospeo", style: "bg-warning/10 text-warning border-warning/30" },
+  hunter: { label: "Hunter", style: "bg-warning/10 text-warning border-warning/30" },
 };
 
 function LoadingCell() {
@@ -155,9 +156,9 @@ export function ResultsTable({ rows, isLoading }: ResultsTableProps) {
                       {enr.owner_source && (
                         <Badge
                           variant="outline"
-                          className={`text-[10px] block w-fit ${SOURCE_STYLES[enr.owner_source] ?? "bg-muted text-muted-foreground"}`}
+                          className={`text-[10px] block w-fit ${SOURCE_CONFIG[enr.owner_source]?.style ?? "bg-muted text-muted-foreground"}`}
                         >
-                          {enr.owner_source}
+                          {SOURCE_CONFIG[enr.owner_source]?.label ?? enr.owner_source}
                         </Badge>
                       )}
                     </div>
@@ -181,7 +182,7 @@ export function ResultsTable({ rows, isLoading }: ResultsTableProps) {
                               : "bg-muted text-muted-foreground"
                           }`}
                         >
-                          {enr.email_type}
+                          {enr.email_type === "personal" ? "Personal" : enr.email_type === "generic" ? "Generic" : enr.email_type}
                         </Badge>
                       )}
                     </div>

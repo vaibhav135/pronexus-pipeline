@@ -6,14 +6,26 @@ import {
 import type {
   SearchRequest,
   SearchResponse,
-  EnrichRequest,
   EnrichResponse,
-  SearchJob,
+  JobResponse,
+  JobWithBusinessesResponse,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // --- Raw fetch functions ---
+
+async function fetchJobs(): Promise<JobResponse[]> {
+  const res = await fetch(`${API_BASE}/api/jobs`);
+  if (!res.ok) throw new Error("Failed to fetch jobs");
+  return res.json();
+}
+
+async function fetchJob(jobId: string): Promise<JobWithBusinessesResponse> {
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
+  if (!res.ok) throw new Error("Failed to fetch job");
+  return res.json();
+}
 
 async function postSearch(req: SearchRequest): Promise<SearchResponse> {
   const res = await fetch(`${API_BASE}/api/search`, {
@@ -28,11 +40,11 @@ async function postSearch(req: SearchRequest): Promise<SearchResponse> {
   return res.json();
 }
 
-async function postEnrich(req: EnrichRequest): Promise<EnrichResponse> {
+async function postEnrich(businessId: string): Promise<EnrichResponse> {
   const res = await fetch(`${API_BASE}/api/enrich`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+    body: JSON.stringify({ business_id: businessId }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -41,54 +53,19 @@ async function postEnrich(req: EnrichRequest): Promise<EnrichResponse> {
   return res.json();
 }
 
-// --- Local storage for search history (no backend endpoint for job list) ---
-
-const JOBS_STORAGE_KEY = "pronexus_jobs";
-
-function loadJobs(): SearchJob[] {
-  if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(JOBS_STORAGE_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function saveJobs(jobs: SearchJob[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(JOBS_STORAGE_KEY, JSON.stringify(jobs));
-}
-
-function addJob(job: SearchJob) {
-  const jobs = loadJobs();
-  // Replace if same query exists, otherwise prepend
-  const idx = jobs.findIndex((j) => j.query === job.query);
-  if (idx >= 0) {
-    jobs[idx] = job;
-  } else {
-    jobs.unshift(job);
-  }
-  saveJobs(jobs);
-}
-
 // --- React Query Hooks ---
 
 export function useJobs() {
   return useQuery({
     queryKey: ["jobs"],
-    queryFn: () => loadJobs(),
+    queryFn: fetchJobs,
   });
 }
 
 export function useJob(jobId: string) {
   return useQuery({
     queryKey: ["jobs", jobId],
-    queryFn: () => {
-      const jobs = loadJobs();
-      return jobs.find((j) => j.jobId === jobId) ?? null;
-    },
+    queryFn: () => fetchJob(jobId),
     enabled: !!jobId,
   });
 }
@@ -97,26 +74,54 @@ export function useSearch() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (query: string) => postSearch({ query }),
-    onSuccess: (data) => {
-      const job: SearchJob = {
-        jobId: data.job_id,
-        query: data.query,
-        status: "completed",
-        resultsCount: data.results_count,
-        businesses: data.businesses,
-        createdAt: new Date().toISOString(),
-      };
-      addJob(job);
+    mutationFn: (req: SearchRequest) => postSearch(req),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      queryClient.setQueryData(["jobs", data.job_id], job);
     },
   });
 }
 
 export function useEnrich() {
   return useMutation({
-    mutationFn: (businessId: string) =>
-      postEnrich({ business_id: businessId }),
+    mutationFn: postEnrich,
   });
+}
+
+// --- SSE for bulk enrichment ---
+
+export function subscribeToEnrichStream(
+  jobId: string,
+  onResult: (result: EnrichResponse) => void,
+  onProgress: (completed: number, total: number) => void,
+  onError: (businessId: string, businessName: string, error: string) => void,
+  onDone: () => void,
+): () => void {
+  const eventSource = new EventSource(
+    `${API_BASE}/api/jobs/${jobId}/enrich-stream`,
+  );
+
+  eventSource.addEventListener("result", (e) => {
+    const data: EnrichResponse = JSON.parse(e.data);
+    onResult(data);
+  });
+
+  eventSource.addEventListener("progress", (e) => {
+    const data = JSON.parse(e.data);
+    onProgress(data.completed, data.total);
+  });
+
+  eventSource.addEventListener("error", (e) => {
+    // SSE "error" can be a connection error (no data) or our custom event
+    if (e instanceof MessageEvent && e.data) {
+      const data = JSON.parse(e.data);
+      onError(data.business_id, data.business_name, data.error);
+    }
+  });
+
+  eventSource.addEventListener("done", () => {
+    eventSource.close();
+    onDone();
+  });
+
+  return () => eventSource.close();
 }

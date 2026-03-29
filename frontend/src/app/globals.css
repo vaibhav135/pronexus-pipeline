@@ -122,4 +122,12 @@ body {
   html {
     @apply font-sans;
   }
+  button,
+  a,
+  [role="button"],
+  [role="menuitem"],
+  select,
+  summary {
+    cursor: pointer;
+  }
 }
