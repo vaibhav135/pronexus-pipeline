@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlmodel import SQLModel, Field, Column
-from sqlalchemy import Text, Index
+from sqlalchemy import Text, Index, DateTime
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 import sqlalchemy as sa
 
@@ -36,8 +36,8 @@ class Business(SQLModel, table=True):
     place_link: str | None = Field(default=None, sa_column=Column(Text))
     source: str = Field(default="google_maps", max_length=50)
     search_query: str | None = Field(default=None, sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))
 
     __table_args__ = (
         Index("idx_businesses_city_state", "city", "state"),
@@ -51,5 +51,5 @@ class ScrapeJob(SQLModel, table=True):
     search_query: str = Field(max_length=500, unique=True)
     status: str = Field(default="pending", max_length=50)  # "pending" | "running" | "completed" | "failed"
     results_count: int = Field(default=0)
-    last_run_at: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow)
+    last_run_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))

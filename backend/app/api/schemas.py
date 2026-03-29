@@ -1,0 +1,42 @@
+import uuid
+from datetime import datetime
+from decimal import Decimal
+
+from pydantic import BaseModel
+
+
+class SearchRequest(BaseModel):
+    query: str
+    limit: int = 20
+    offset: int = 0
+    country: str = "us"
+    lang: str = "en"
+    zoom: int = 12
+    lat: str = ""
+    lng: str = ""
+
+
+class BusinessResponse(BaseModel):
+    id: uuid.UUID
+    place_id: str
+    name: str
+    types: list[str] | None = None
+    full_address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    phone_number: str | None = None
+    website: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    rating: Decimal | None = None
+    review_count: int | None = None
+    verified: bool
+    is_claimed: bool
+    created_at: datetime
+
+
+class SearchResponse(BaseModel):
+    job_id: uuid.UUID
+    query: str
+    results_count: int
+    businesses: list[BusinessResponse]
