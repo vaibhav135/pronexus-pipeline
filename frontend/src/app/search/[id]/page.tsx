@@ -2,7 +2,7 @@
 
 import { use, useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, CheckCircle2, RotateCcw, StopCircle } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, RotateCcw, StopCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResultsTable } from "@/components/results-table";
 import { ExportMenu } from "@/components/export-menu";
@@ -23,12 +23,59 @@ export default function SearchResultsPage({
   const [enriching, setEnriching] = useState(false);
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const cleanupRef = useRef<(() => void) | null>(null);
+  const initializedRef = useRef(false);
 
-  function connectSSE(jobId: string) {
+  // Load cached enrichment data from the API response
+  useEffect(() => {
+    if (!data || initializedRef.current) return;
+    initializedRef.current = true;
+
+    const cached: Record<string, { data: EnrichResponse | null; status: EnrichStatus }> = {};
+    let hasUnenriched = false;
+
+    for (const item of data.businesses) {
+      if (item.is_enriched) {
+        cached[item.business.id] = {
+          data: {
+            business_id: item.business.id,
+            business_name: item.business.name,
+            owner_name: item.owner_name,
+            owner_source: item.owner_source,
+            email: item.email,
+            email_type: item.email_type,
+            email_source: item.email_source,
+          },
+          status: "enriched",
+        };
+      } else {
+        hasUnenriched = true;
+      }
+    }
+
+    setEnrichments(cached);
+
+    // Auto-start SSE only if there are unenriched businesses
+    if (hasUnenriched) {
+      startSSE();
+    }
+  }, [data, id]);
+
+  function startSSE() {
     setEnriching(true);
 
+    // Mark unenriched rows as enriching
+    if (data) {
+      const pending: Record<string, { data: EnrichResponse | null; status: EnrichStatus }> = {};
+      for (const item of data.businesses) {
+        if (!item.is_enriched) {
+          pending[item.business.id] = { data: null, status: "enriching" };
+        }
+      }
+      setEnrichments((prev) => ({ ...prev, ...pending }));
+    }
+
     const cleanup = subscribeToEnrichStream(
-      jobId,
+      id,
       (result) => {
         setEnrichments((prev) => ({
           ...prev,
@@ -52,32 +99,17 @@ export default function SearchResultsPage({
     cleanupRef.current = cleanup;
   }
 
-  // Auto-start enrichment when data loads
+  // Cleanup SSE on unmount
   useEffect(() => {
-    if (!data || data.businesses.length === 0) return;
-
-    // Mark all as enriching
-    const initial: Record<string, { data: EnrichResponse | null; status: EnrichStatus }> = {};
-    for (const biz of data.businesses) {
-      initial[biz.id] = { data: null, status: "enriching" };
-    }
-    setEnrichments(initial);
-
-    connectSSE(id);
-
     return () => {
       cleanupRef.current?.();
-      cleanupRef.current = null;
     };
-    // Only run when data first loads or id changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, id]);
+  }, []);
 
   function stopEnrich() {
     cleanupRef.current?.();
     cleanupRef.current = null;
     setEnriching(false);
-    // Mark still-enriching rows back to pending
     setEnrichments((prev) => {
       const updated = { ...prev };
       for (const [key, val] of Object.entries(updated)) {
@@ -90,7 +122,6 @@ export default function SearchResultsPage({
   }
 
   function retryFailed() {
-    // Reset failed rows to enriching
     setEnrichments((prev) => {
       const updated = { ...prev };
       for (const [key, val] of Object.entries(updated)) {
@@ -100,7 +131,7 @@ export default function SearchResultsPage({
       }
       return updated;
     });
-    connectSSE(id);
+    startSSE();
   }
 
   if (jobLoading) {
@@ -128,10 +159,10 @@ export default function SearchResultsPage({
 
   const { job, businesses } = data;
 
-  const rows: BusinessRow[] = businesses.map((biz) => ({
-    business: biz,
-    enrichment: enrichments[biz.id]?.data ?? null,
-    enrichStatus: enrichments[biz.id]?.status ?? "pending",
+  const rows: BusinessRow[] = businesses.map((item) => ({
+    business: item.business,
+    enrichment: enrichments[item.business.id]?.data ?? null,
+    enrichStatus: enrichments[item.business.id]?.status ?? "pending",
   }));
 
   const enrichedCount = rows.filter(
@@ -206,11 +237,11 @@ export default function SearchResultsPage({
             )
           ) : (
             <Button
-              onClick={() => connectSSE(id)}
+              onClick={startSSE}
               className="gap-2 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm shadow-primary/20"
             >
-              <CheckCircle2 className="h-4 w-4" />
-              Resume Enrichment
+              <Sparkles className="h-4 w-4" />
+              Enrich Remaining
             </Button>
           )}
           <ExportMenu rows={rows} />

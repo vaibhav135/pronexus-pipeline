@@ -70,10 +70,21 @@ export interface JobResponse {
   created_at: string;
 }
 
+// Matches backend BusinessWithEnrichment
+export interface BusinessWithEnrichment {
+  business: Business;
+  owner_name: string | null;
+  owner_source: string | null;
+  email: string | null;
+  email_type: string | null;
+  email_source: string | null;
+  is_enriched: boolean;
+}
+
 // Matches backend JobWithBusinessesResponse
 export interface JobWithBusinessesResponse {
   job: JobResponse;
-  businesses: Business[];
+  businesses: BusinessWithEnrichment[];
 }
 
 // Frontend-only: a row in the results table combining business + enrichment

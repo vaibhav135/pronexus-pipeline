@@ -11,7 +11,7 @@ from sqlmodel import select, desc
 from app.api.schemas import (
     SearchRequest, SearchResponse, BusinessResponse,
     EnrichRequest, EnrichResponse,
-    JobResponse, JobWithBusinessesResponse,
+    JobResponse, JobWithBusinessesResponse, BusinessWithEnrichment,
 )
 from app.database import get_session
 from app.models.db import Business, Owner, Email, ScrapeJob, utcnow
@@ -244,7 +244,7 @@ async def list_jobs():
 
 @router.get("/jobs/{job_id}", response_model=JobWithBusinessesResponse)
 async def get_job(job_id: uuid_mod.UUID):
-    """Get a single job with its businesses."""
+    """Get a single job with its businesses and existing enrichment data."""
     async with get_session() as session:
         result = await session.execute(
             select(ScrapeJob).where(ScrapeJob.id == job_id)
@@ -258,6 +258,47 @@ async def get_job(job_id: uuid_mod.UUID):
         )
         businesses = biz_result.scalars().all()
 
+        enriched_businesses = []
+        for b in businesses:
+            owner_result = await session.execute(
+                select(Owner).where(Owner.business_id == b.id)
+            )
+            owner = owner_result.scalars().first()
+
+            email_result = await session.execute(
+                select(Email).where(Email.business_id == b.id, Email.is_primary == True)
+            )
+            email = email_result.scalars().first()
+
+            enriched_businesses.append(
+                BusinessWithEnrichment(
+                    business=BusinessResponse(
+                        id=b.id,
+                        place_id=b.place_id,
+                        name=b.name,
+                        types=b.types,
+                        full_address=b.full_address,
+                        city=b.city,
+                        state=b.state,
+                        phone_number=b.phone_number,
+                        website=b.website,
+                        latitude=b.latitude,
+                        longitude=b.longitude,
+                        rating=b.rating,
+                        review_count=b.review_count,
+                        verified=b.verified,
+                        is_claimed=b.is_claimed,
+                        created_at=b.created_at,
+                    ),
+                    owner_name=owner.name if owner else None,
+                    owner_source=owner.source if owner else None,
+                    email=email.email if email else None,
+                    email_type=email.email_type if email else None,
+                    email_source=email.source if email else None,
+                    is_enriched=bool(owner and owner.name),
+                )
+            )
+
     return JobWithBusinessesResponse(
         job=JobResponse(
             id=job.id,
@@ -267,27 +308,7 @@ async def get_job(job_id: uuid_mod.UUID):
             last_run_at=job.last_run_at,
             created_at=job.created_at,
         ),
-        businesses=[
-            BusinessResponse(
-                id=b.id,
-                place_id=b.place_id,
-                name=b.name,
-                types=b.types,
-                full_address=b.full_address,
-                city=b.city,
-                state=b.state,
-                phone_number=b.phone_number,
-                website=b.website,
-                latitude=b.latitude,
-                longitude=b.longitude,
-                rating=b.rating,
-                review_count=b.review_count,
-                verified=b.verified,
-                is_claimed=b.is_claimed,
-                created_at=b.created_at,
-            )
-            for b in businesses
-        ],
+        businesses=enriched_businesses,
     )
 
 
