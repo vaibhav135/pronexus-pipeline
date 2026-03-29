@@ -49,38 +49,44 @@ Search Google Maps for businesses by category + location using Scraper Tech API.
 - **Output:** Business name, phone, website, address, rating, reviews
 - **Deduplication:** By `place_id`
 
-### Step 2: Owner Identification (Waterfall)
+### Step 2: Owner Identification + Email Extraction
 
-Find the business owner's name through a multi-step fallback chain:
+One website scrape feeds both owner name extraction and email extraction in parallel.
 
 ```
-Website Scrape (Jina Reader + Groq)
-        │
-        ├── Found → store, move to Step 3
-        │
-        ▼ Not found
-Tavily Search (1,000 free/month) + Groq
-        │
-        ├── Found → store, move to Step 3
-        │
-        ▼ Not found
-Exa Search (1,000 free/month) + Groq
-        │
-        ├── Found → store, move to Step 3
-        │
-        ▼ Not found
-Store as null → move to Step 3
+Scrape website (httpx homepage + about/contact pages → Jina Reader fallback)
+    ├── Extract owner name (Groq LLM)
+    ├── Extract emails (regex)
+    │
+    ├── Both found? → done
+    │
+    ▼ Missing name or email?
+Search fallback (Tavily → Exa) — one query, extract both
+    ├── Extract owner name (Groq LLM)
+    ├── Extract emails (regex)
+    │
+    ├── Both found? → done
+    │
+    ▼ Still missing email + have owner name?
+Prospeo (owner name + domain → personal email)
+    │
+    ▼ Still nothing?
+Store whatever we have → move on
 ```
 
-**Website scraping:** [Jina Reader API](https://jina.ai/reader/) converts any URL to clean markdown (renders JavaScript, handles complex sites). Falls back to plain `httpx` if Jina is unavailable.
+**Website scraping:** `httpx` fetches the homepage and discovers internal pages (about, contact, team) via link parsing. Strips HTML boilerplate (nav, footer, header, sidebar) for cleaner LLM input. Falls back to [Jina Reader API](https://jina.ai/reader/) for JS-heavy sites.
 
 **LLM extraction:** Groq Llama 3.1 8B ($0.05/1M tokens) extracts the owner name from scraped text. An 8B model performs identically to 70B for this simple extraction task.
 
-**Search fallback:** When the owner name isn't on the website, we search the web using [Tavily](https://tavily.com/) (primary, 1,000 free/month resets) and [Exa](https://exa.ai/) (secondary, 1,000 free/month).
+**Email extraction:** Regex-based extraction from the raw HTML — catches emails in text, `mailto:` links, and contact sections. No LLM needed.
 
-### Step 3: Email Finding (Waterfall)
+**Search fallback:** When the owner name isn't on the website, we search the web using [Tavily](https://tavily.com/) (primary, 1,000 free/month) and [Exa](https://exa.ai/) (secondary, 1,000 free/month). Both name and email are extracted from the same search results.
 
-*Coming soon* — Outscraper → Prospeo → Hunter.io waterfall.
+**Email fallback:** When no email is found from website or search, [Prospeo](https://prospeo.io/) finds personal emails using the owner name + domain ($0.0074/email, only charges for valid results).
+
+### Future: Direct Google Search
+
+Scrapling's `StealthyFetcher` + DataImpulse residential proxy successfully bypassed Google's bot detection in our tests (found 2/3 owner names via real Google results). This can be added as a third search fallback when Tavily/Exa free tiers are exhausted. See [Research & Decisions](#google-search--why-its-hard) for details.
 
 ## Tech Stack
 
@@ -93,9 +99,10 @@ Store as null → move to Step 3
 | Database | PostgreSQL | Structured, queryable |
 | Migrations | Alembic | Schema versioning |
 | LLM | Groq (Llama 3.1 8B) | Cheapest, fastest, proven |
-| Website scraping | Jina Reader API | JS rendering, clean markdown |
+| Website scraping | httpx + Jina Reader | httpx primary, Jina for JS rendering |
 | Search (primary) | Tavily | 1,000 free/month, AI-optimized |
 | Search (secondary) | Exa | Semantic search, people/company categories |
+| Email finding | Prospeo | Personal email from name + domain |
 | Maps discovery | Scraper Tech | Google Maps data |
 | Containerization | Docker | Local dev + Railway deploy |
 | Hosting | Railway.app | Managed Postgres, 24/7 worker |
@@ -140,6 +147,7 @@ uv run uvicorn app.main:app --reload
 | `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | 1,000 searches/month |
 | `EXA_API_KEY` | [dashboard.exa.ai](https://dashboard.exa.ai) | 1,000 free/month |
 | `JINA_AI_API_KEY` | [jina.ai](https://jina.ai) | 10M free tokens |
+| `PROSPEO_API_KEY` | [prospeo.io](https://prospeo.io) | Pay per valid result ($0.0074/email) |
 
 ## Project Structure
 
@@ -147,29 +155,32 @@ uv run uvicorn app.main:app --reload
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app + health check
-│   ├── config.py            # Settings from env vars
-│   ├── database.py          # Async SQLModel engine + session
+│   ├── main.py                # FastAPI app + health check
+│   ├── config.py              # Settings from env vars
+│   ├── database.py            # Async SQLModel engine + session
 │   │
 │   ├── models/
-│   │   └── db.py            # SQLModel tables (Business, ScrapeJob)
+│   │   └── db.py              # SQLModel tables (Business, Owner, Email, ScrapeJob)
 │   │
 │   ├── api/
-│   │   ├── routes.py        # API routes (POST /api/search)
-│   │   └── schemas.py       # Pydantic request/response schemas
+│   │   ├── routes.py          # API routes (/search, /enrich)
+│   │   └── schemas.py         # Pydantic request/response schemas
 │   │
 │   ├── pipeline/
-│   │   ├── discovery.py     # Step 1: Google Maps scraping
-│   │   ├── owner_id.py      # Step 2: Owner identification (TODO)
-│   │   └── email_finder.py  # Step 3: Email waterfall (TODO)
+│   │   ├── discovery.py       # Step 1: Google Maps scraping
+│   │   ├── website_scraper.py # Website scraping (httpx + Jina Reader)
+│   │   ├── owner_id.py        # Owner name extraction (Groq LLM)
+│   │   ├── search_fallback.py # Tavily → Exa search waterfall
+│   │   └── email_finder.py    # Prospeo email fallback
 │   │
 │   └── utils/
 │       └── __init__.py
 │
-├── alembic/                 # Database migrations
+├── alembic/                   # Database migrations
 ├── scripts/
-│   └── test_discovery.py    # Discovery service test
-├── docker-compose.yml       # Local PostgreSQL
+│   ├── test_discovery.py      # Discovery service test
+│   └── test_owner_id.py       # Owner ID pipeline test
+├── docker-compose.yml         # Local PostgreSQL
 ├── pyproject.toml
 └── .env.example
 ```
@@ -180,8 +191,11 @@ backend/
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `POST` | `/api/search` | Search Google Maps, store businesses |
+| `POST` | `/api/enrich` | Run full pipeline on a business (owner + email) |
 
 ### POST /api/search
+
+Search Google Maps for businesses and store results.
 
 ```json
 {
@@ -197,6 +211,32 @@ backend/
 ```
 
 Returns discovered businesses with deduplication by `place_id`.
+
+### POST /api/enrich
+
+Run the full enrichment pipeline on a stored business — scrape website, identify owner, find email.
+
+```json
+{
+  "business_id": "uuid-of-business"
+}
+```
+
+Returns:
+
+```json
+{
+  "business_id": "...",
+  "business_name": "North Texas HVAC",
+  "owner_name": "Bryan Slagle",
+  "owner_source": "website_httpx",
+  "email": "bryan@northtxhvac.com",
+  "email_type": "personal",
+  "email_source": "website"
+}
+```
+
+Pipeline: scrape website → extract owner + emails → search fallback (Tavily → Exa) → Prospeo email fallback → store results.
 
 ## Research & Decisions
 
@@ -234,7 +274,7 @@ Extensive research was done to find the best tools for each pipeline step. Here'
 | ScrapeGraphAI | 2/3 | Playwright-based, heavy deps |
 | httpx + strip_html | 1/3 | Misses JS-rendered content |
 
-**Decision:** Jina Reader API. One HTTP call, no browser dependency, renders JavaScript.
+**Decision:** httpx as primary (fast, no deps), Jina Reader as fallback for JS-heavy sites. HTML stripping removes boilerplate (nav, footer, header, sidebar) for cleaner LLM input.
 
 ### Search Fallback (when owner not on website)
 
@@ -242,15 +282,15 @@ Extensive research was done to find the best tools for each pipeline step. Here'
 |---|---|---|---|
 | Scrapling + residential proxy + Google | 2/3 | ~$0.07/month | Proven, future implementation |
 | Camoufox + residential proxy + Google | 2/3 | ~$0.07/month | Proven but inconsistent |
-| **Tavily** | Not tested on our data | 1,000 free/month | Primary fallback |
-| **Exa** | Not tested on our data | 1,000 one-time | Secondary fallback |
+| **Tavily** | Found Bryan Slagle | 1,000 free/month | Primary fallback |
+| **Exa** | Not tested | 1,000 free/month | Secondary fallback |
 | SearXNG (self-hosted) | 1/3 | Free | Poor result quality |
 | DuckDuckGo (ddgs library) | 0/3 | Free | Useless for owner names |
 | DuckDuckGo via Camoufox | 2/3 | Free | Good but not Google quality |
 | yagooglesearch | 0/3 | Free | Broken since Jan 2025 |
-| Serper free tier | 2,500 one-time | $50/50k after | Too expensive |
+| Serper free tier | 2,500 one-time | $50/50k after | Too expensive after free tier |
 
-**Decision:** Tavily (primary) + Exa (secondary). Both have free tiers. Future: add Scrapling + residential proxy for direct Google search when free tiers are exhausted.
+**Decision:** Tavily (primary) + Exa (secondary). Both have monthly-resetting free tiers. Future: add Scrapling + residential proxy for direct Google search when free tiers are exhausted.
 
 ### Google Search — Why It's Hard
 
@@ -259,6 +299,7 @@ Since January 2025, Google requires JavaScript rendering for search results. No 
 - reCAPTCHA v3 is invisible scoring — no puzzle to solve
 - The only open-source tool that bypassed Google detection was **Scrapling's StealthyFetcher** combined with a **residential proxy** (DataImpulse, $1/GB)
 - Commercial SERP APIs (Serper, SerpAPI) work because they use Google's official Custom Search API or massive proxy infrastructure
+- No open-source CAPTCHA solver exists for reCAPTCHA v3 (it's behavior-based scoring, not a puzzle)
 
 ### How Commercial Tools Do Web Search
 
@@ -270,6 +311,20 @@ Since January 2025, Google requires JavaScript rendering for search results. No 
 | Perplexity | Own search index (hundreds of billions of pages) |
 | ChatGPT | Bing (Microsoft partnership) |
 
+### Tools Tested But Not Used
+
+| Tool | Why not |
+|---|---|
+| ScrapeGraphAI | Heavy deps (Playwright + langchain), SearchGraph sends 67k tokens per query |
+| LangExtract (Google) | Provider routing fights non-Gemini models, no improvement over raw Groq |
+| Camoufox | Works but inconsistent with Google after multiple rapid searches |
+| Lightpanda | JS engine too weak for Google, detected as bot |
+| OpenSERP | go-rod Chromium can't handle authenticated proxies |
+| SearXNG | Google engine blocked, other engines return poor results |
+| yagooglesearch/googlesearch-python | Broken since Google requires JS (Jan 2025) |
+| GLiNER/NuNER Zero | NER can't distinguish owner from random person on page |
+| spaCy | Too noisy for messy website HTML |
+
 ## Cost Model
 
 ### At 10,000 leads/month
@@ -279,11 +334,12 @@ Since January 2025, Google requires JavaScript rendering for search results. No 
 | Scraper Tech Pro (Google Maps) | $5.99 |
 | Groq Llama 8B (owner extraction) | ~$0.54 |
 | Tavily (search fallback) | Free (1,000/month) |
-| Exa (search overflow) | Free (1,000 one-time) |
+| Exa (search overflow) | Free (1,000/month) |
 | Jina Reader (website scraping) | Free (10M tokens) |
+| Prospeo (email fallback, ~30% of leads) | ~$22.00 |
 | Railway Hobby plan | $5.00 |
-| **Total** | **~$12/month** |
-| **Cost per lead** | **~$0.0012** |
+| **Total** | **~$34/month** |
+| **Cost per lead** | **~$0.0034** |
 
 ---
 
