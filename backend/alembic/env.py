@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from alembic import context
 from sqlmodel import SQLModel
 
-from app.models.db import Business, ScrapeJob  # noqa: F401 — registers models with metadata
+from app.models.db import Business, ScrapeJob, Owner  # noqa: F401 — registers models with metadata
 
 # Load .env file so DATABASE_URL is available
 load_dotenv()

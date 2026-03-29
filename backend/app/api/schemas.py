@@ -40,3 +40,15 @@ class SearchResponse(BaseModel):
     query: str
     results_count: int
     businesses: list[BusinessResponse]
+
+
+class OwnerIdentifyRequest(BaseModel):
+    business_id: uuid.UUID
+
+
+class OwnerResponse(BaseModel):
+    business_id: uuid.UUID
+    business_name: str
+    owner_name: str | None = None
+    source: str | None = None
+    confidence: str | None = None

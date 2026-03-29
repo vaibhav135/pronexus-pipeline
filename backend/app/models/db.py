@@ -44,6 +44,18 @@ class Business(SQLModel, table=True):
     )
 
 
+class Owner(SQLModel, table=True):
+    __tablename__ = "owners"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    business_id: uuid.UUID = Field(foreign_key="businesses.id", index=True)
+    name: str | None = Field(default=None, max_length=255)
+    source: str | None = Field(default=None, max_length=50)  # "website_httpx" | "website_jina" | "tavily_search" | "exa_search"
+    confidence: str | None = Field(default=None, max_length=20)  # "high" | "medium" | "low"
+    raw_response: dict | None = Field(default=None, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), default=utcnow))
+
+
 class ScrapeJob(SQLModel, table=True):
     __tablename__ = "scrape_jobs"
 
