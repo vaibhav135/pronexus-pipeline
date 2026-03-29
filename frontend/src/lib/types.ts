@@ -24,14 +24,6 @@ export interface Business {
   created_at: string;
 }
 
-// Matches backend SearchResponse
-export interface SearchResponse {
-  job_id: string;
-  query: string;
-  results_count: number;
-  businesses: Business[];
-}
-
 // Matches backend SearchRequest
 export interface SearchRequest {
   query: string;
@@ -42,6 +34,14 @@ export interface SearchRequest {
   zoom?: number;
   lat?: string;
   lng?: string;
+}
+
+// Matches backend SearchResponse
+export interface SearchResponse {
+  job_id: string;
+  query: string;
+  results_count: number;
+  businesses: Business[];
 }
 
 // Matches backend EnrichRequest
@@ -60,6 +60,22 @@ export interface EnrichResponse {
   email_source: string | null;
 }
 
+// Matches backend JobResponse
+export interface JobResponse {
+  id: string;
+  search_query: string;
+  status: JobStatus;
+  results_count: number;
+  last_run_at: string | null;
+  created_at: string;
+}
+
+// Matches backend JobWithBusinessesResponse
+export interface JobWithBusinessesResponse {
+  job: JobResponse;
+  businesses: Business[];
+}
+
 // Frontend-only: a row in the results table combining business + enrichment
 export interface BusinessRow {
   business: Business;
@@ -67,12 +83,14 @@ export interface BusinessRow {
   enrichStatus: EnrichStatus;
 }
 
-// Stored search for the home page job list
-export interface SearchJob {
-  jobId: string;
-  query: string;
-  status: JobStatus;
-  resultsCount: number;
-  businesses: Business[];
-  createdAt: string;
+// SSE event types from enrich-stream
+export interface SSEProgressEvent {
+  completed: number;
+  total: number;
+}
+
+export interface SSEErrorEvent {
+  business_id: string;
+  business_name: string;
+  error: string;
 }

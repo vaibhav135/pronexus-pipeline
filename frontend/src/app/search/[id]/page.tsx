@@ -1,13 +1,12 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, Loader2, CheckCircle2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Loader2, CheckCircle2, RotateCcw, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResultsTable } from "@/components/results-table";
 import { ExportMenu } from "@/components/export-menu";
-import { useJob, useEnrich } from "@/lib/api";
+import { useJob, subscribeToEnrichStream } from "@/lib/api";
 import type { BusinessRow, EnrichResponse, EnrichStatus } from "@/lib/types";
 
 export default function SearchResultsPage({
@@ -16,49 +15,93 @@ export default function SearchResultsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { data: job, isLoading: jobLoading } = useJob(id);
-  const enrich = useEnrich();
+  const { data, isLoading: jobLoading } = useJob(id);
 
   const [enrichments, setEnrichments] = useState<
     Record<string, { data: EnrichResponse | null; status: EnrichStatus }>
   >({});
+  const [enriching, setEnriching] = useState(false);
+  const [progress, setProgress] = useState({ completed: 0, total: 0 });
+  const cleanupRef = useRef<(() => void) | null>(null);
 
-  const enrichBusiness = useCallback(
-    async (businessId: string) => {
-      setEnrichments((prev) => ({
-        ...prev,
-        [businessId]: { data: null, status: "enriching" },
-      }));
+  function connectSSE(jobId: string) {
+    setEnriching(true);
 
-      try {
-        const result = await enrich.mutateAsync(businessId);
+    const cleanup = subscribeToEnrichStream(
+      jobId,
+      (result) => {
         setEnrichments((prev) => ({
           ...prev,
-          [businessId]: { data: result, status: "enriched" },
+          [result.business_id]: { data: result, status: "enriched" },
         }));
-      } catch {
+      },
+      (completed, total) => {
+        setProgress({ completed, total });
+      },
+      (businessId) => {
         setEnrichments((prev) => ({
           ...prev,
           [businessId]: { data: null, status: "failed" },
         }));
-      }
-    },
-    [enrich],
-  );
+      },
+      () => {
+        setEnriching(false);
+      },
+    );
 
-  const [bulkEnriching, setBulkEnriching] = useState(false);
+    cleanupRef.current = cleanup;
+  }
 
-  const enrichAll = useCallback(async () => {
-    if (!job?.businesses) return;
-    setBulkEnriching(true);
+  // Auto-start enrichment when data loads
+  useEffect(() => {
+    if (!data || data.businesses.length === 0) return;
 
-    for (const biz of job.businesses) {
-      if (enrichments[biz.id]?.status === "enriched") continue;
-      await enrichBusiness(biz.id);
+    // Mark all as enriching
+    const initial: Record<string, { data: EnrichResponse | null; status: EnrichStatus }> = {};
+    for (const biz of data.businesses) {
+      initial[biz.id] = { data: null, status: "enriching" };
     }
+    setEnrichments(initial);
 
-    setBulkEnriching(false);
-  }, [job, enrichments, enrichBusiness]);
+    connectSSE(id);
+
+    return () => {
+      cleanupRef.current?.();
+      cleanupRef.current = null;
+    };
+    // Only run when data first loads or id changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, id]);
+
+  function stopEnrich() {
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+    setEnriching(false);
+    // Mark still-enriching rows back to pending
+    setEnrichments((prev) => {
+      const updated = { ...prev };
+      for (const [key, val] of Object.entries(updated)) {
+        if (val.status === "enriching") {
+          updated[key] = { data: null, status: "pending" };
+        }
+      }
+      return updated;
+    });
+  }
+
+  function retryFailed() {
+    // Reset failed rows to enriching
+    setEnrichments((prev) => {
+      const updated = { ...prev };
+      for (const [key, val] of Object.entries(updated)) {
+        if (val.status === "failed") {
+          updated[key] = { data: null, status: "enriching" };
+        }
+      }
+      return updated;
+    });
+    connectSSE(id);
+  }
 
   if (jobLoading) {
     return (
@@ -69,7 +112,7 @@ export default function SearchResultsPage({
     );
   }
 
-  if (!job) {
+  if (!data) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4">
         <p className="text-text-muted">Search not found</p>
@@ -83,7 +126,9 @@ export default function SearchResultsPage({
     );
   }
 
-  const rows: BusinessRow[] = (job.businesses ?? []).map((biz) => ({
+  const { job, businesses } = data;
+
+  const rows: BusinessRow[] = businesses.map((biz) => ({
     business: biz,
     enrichment: enrichments[biz.id]?.data ?? null,
     enrichStatus: enrichments[biz.id]?.status ?? "pending",
@@ -92,7 +137,10 @@ export default function SearchResultsPage({
   const enrichedCount = rows.filter(
     (r) => r.enrichStatus === "enriched",
   ).length;
-  const allEnriched = enrichedCount === rows.length && rows.length > 0;
+  const failedCount = rows.filter(
+    (r) => r.enrichStatus === "failed",
+  ).length;
+  const allDone = enrichedCount + failedCount === rows.length && rows.length > 0;
 
   return (
     <div className="flex flex-1 flex-col px-4 py-8 gap-6 max-w-7xl mx-auto w-full">
@@ -110,18 +158,24 @@ export default function SearchResultsPage({
           </Link>
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight text-text">
-              {job.query}
+              {job.search_query}
             </h1>
             <div className="flex items-center gap-3 text-sm text-text-muted">
-              <span>{job.resultsCount} businesses</span>
+              <span>{job.results_count} businesses</span>
               <span className="h-1 w-1 rounded-full bg-border" />
-              <span>{enrichedCount} enriched</span>
-              {bulkEnriching && (
+              <span className="text-success">{enrichedCount} enriched</span>
+              {failedCount > 0 && (
+                <>
+                  <span className="h-1 w-1 rounded-full bg-border" />
+                  <span className="text-error">{failedCount} failed</span>
+                </>
+              )}
+              {enriching && (
                 <>
                   <span className="h-1 w-1 rounded-full bg-border" />
                   <span className="flex items-center gap-1 text-warning">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Enriching...
+                    {progress.completed}/{progress.total}
                   </span>
                 </>
               )}
@@ -130,43 +184,38 @@ export default function SearchResultsPage({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            onClick={enrichAll}
-            disabled={bulkEnriching || allEnriched}
-            className="gap-2 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm shadow-primary/20"
-          >
-            {allEnriched ? (
-              <>
-                <CheckCircle2 className="h-4 w-4" />
-                All Enriched
-              </>
-            ) : bulkEnriching ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Enriching...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Enrich All
-              </>
-            )}
-          </Button>
+          {enriching ? (
+            <Button
+              onClick={stopEnrich}
+              variant="outline"
+              className="gap-2 border-error text-error hover:bg-error/10"
+            >
+              <StopCircle className="h-4 w-4" />
+              Stop
+            </Button>
+          ) : allDone ? (
+            failedCount > 0 && (
+              <Button
+                onClick={retryFailed}
+                variant="outline"
+                className="gap-2"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Retry Failed
+              </Button>
+            )
+          ) : (
+            <Button
+              onClick={() => connectSSE(id)}
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm shadow-primary/20"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Resume Enrichment
+            </Button>
+          )}
           <ExportMenu rows={rows} />
         </div>
       </div>
-
-      {/* Progress bar */}
-      {rows.length > 0 && (
-        <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
-          <div
-            className="bg-primary h-full rounded-full transition-all duration-500"
-            style={{
-              width: `${(enrichedCount / rows.length) * 100}%`,
-            }}
-          />
-        </div>
-      )}
 
       {/* Results Table */}
       <ResultsTable rows={rows} />

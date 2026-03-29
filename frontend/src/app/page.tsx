@@ -5,14 +5,15 @@ import { Search } from "lucide-react";
 import { SearchBar } from "@/components/search-bar";
 import { JobCard } from "@/components/job-card";
 import { useJobs, useSearch } from "@/lib/api";
+import type { SearchRequest } from "@/lib/types";
 
 export default function Home() {
   const router = useRouter();
   const { data: jobs, isLoading } = useJobs();
   const search = useSearch();
 
-  function handleSearch(query: string) {
-    search.mutate(query, {
+  function handleSearch(req: SearchRequest) {
+    search.mutate(req, {
       onSuccess: (data) => {
         router.push(`/search/${data.job_id}`);
       },
@@ -62,13 +63,16 @@ export default function Home() {
             </div>
             <div className="space-y-2">
               {jobs.map((job) => (
-                <JobCard key={job.jobId} job={job} />
+                <JobCard key={job.id} job={job} />
               ))}
             </div>
           </>
         ) : (
           <div className="text-center py-16 space-y-3">
-            <Search className="mx-auto h-10 w-10 text-text-muted/40" strokeWidth={1.5} />
+            <Search
+              className="mx-auto h-10 w-10 text-text-muted/40"
+              strokeWidth={1.5}
+            />
             <p className="text-text-muted">
               No searches yet. Enter a query above to get started.
             </p>
