@@ -64,7 +64,7 @@ Tavily Search (1,000 free/month) + Groq
         ├── Found → store, move to Step 3
         │
         ▼ Not found
-Exa Search (1,000 one-time credits) + Groq
+Exa Search (1,000 free/month) + Groq
         │
         ├── Found → store, move to Step 3
         │
@@ -76,7 +76,7 @@ Store as null → move to Step 3
 
 **LLM extraction:** Groq Llama 3.1 8B ($0.05/1M tokens) extracts the owner name from scraped text. An 8B model performs identically to 70B for this simple extraction task.
 
-**Search fallback:** When the owner name isn't on the website, we search the web using [Tavily](https://tavily.com/) (primary, 1,000 free/month resets) and [Exa](https://exa.ai/) (secondary, 1,000 one-time credits).
+**Search fallback:** When the owner name isn't on the website, we search the web using [Tavily](https://tavily.com/) (primary, 1,000 free/month resets) and [Exa](https://exa.ai/) (secondary, 1,000 free/month).
 
 ### Step 3: Email Finding (Waterfall)
 
@@ -138,7 +138,7 @@ uv run uvicorn app.main:app --reload
 | `MAP_SCRAPER` | [scraper.tech](https://scraper.tech) | Pro plan $5.99/mo |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) | Free tier available |
 | `TAVILY_API_KEY` | [tavily.com](https://tavily.com) | 1,000 searches/month |
-| `EXA_API_KEY` | [dashboard.exa.ai](https://dashboard.exa.ai) | 1,000 one-time credits |
+| `EXA_API_KEY` | [dashboard.exa.ai](https://dashboard.exa.ai) | 1,000 free/month |
 | `JINA_AI_API_KEY` | [jina.ai](https://jina.ai) | 10M free tokens |
 
 ## Project Structure

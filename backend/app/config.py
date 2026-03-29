@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Search fallback — Tavily (1,000 free/month, resets)
     tavily_api_key: str = ""
 
-    # Search fallback — Exa (1,000 one-time credits)
+    # Search fallback — Exa (1,000 free/month)
     exa_api_key: str = ""
 
     # Website scraping — Jina Reader
