@@ -4,10 +4,11 @@ from fastapi import APIRouter, HTTPException
 from loguru import logger
 from sqlmodel import select
 
-from app.api.schemas import SearchRequest, SearchResponse, BusinessResponse
+from app.api.schemas import SearchRequest, SearchResponse, BusinessResponse, OwnerIdentifyRequest, OwnerResponse
 from app.database import get_session
-from app.models.db import Business, ScrapeJob, utcnow
+from app.models.db import Business, Owner, ScrapeJob, utcnow
 from app.pipeline.discovery import fetch_google_maps_leads
+from app.pipeline.owner_id import identify_owner
 
 router = APIRouter()
 
@@ -97,4 +98,56 @@ async def search_businesses(req: SearchRequest):
             )
             for b in stored
         ],
+    )
+
+
+@router.post("/owner-id", response_model=OwnerResponse)
+async def identify_business_owner(req: OwnerIdentifyRequest):
+    """Identify the owner of a business using the waterfall pipeline."""
+    async with get_session() as session:
+        # Get business
+        result = await session.execute(
+            select(Business).where(Business.id == req.business_id)
+        )
+        biz = result.scalars().first()
+        if not biz:
+            raise HTTPException(status_code=404, detail="Business not found")
+
+        # Check if owner already identified
+        result = await session.execute(
+            select(Owner).where(Owner.business_id == biz.id)
+        )
+        existing_owner = result.scalars().first()
+        if existing_owner and existing_owner.name:
+            return OwnerResponse(
+                business_id=biz.id,
+                business_name=biz.name,
+                owner_name=existing_owner.name,
+                source=existing_owner.source,
+                confidence=existing_owner.confidence,
+            )
+
+        # Run waterfall
+        owner_name, source = await identify_owner(
+            website_url=biz.website,
+            business_name=biz.name,
+            city=biz.city,
+            state=biz.state,
+        )
+
+        # Store result
+        owner = Owner(
+            business_id=biz.id,
+            name=owner_name,
+            source=source,
+            confidence="high" if source and "website" in source else "medium" if source else None,
+        )
+        session.add(owner)
+
+    return OwnerResponse(
+        business_id=biz.id,
+        business_name=biz.name,
+        owner_name=owner_name,
+        source=source,
+        confidence=owner.confidence,
     )
