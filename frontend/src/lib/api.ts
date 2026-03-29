@@ -40,19 +40,6 @@ async function postSearch(req: SearchRequest): Promise<SearchResponse> {
   return res.json();
 }
 
-async function postEnrich(businessId: string): Promise<EnrichResponse> {
-  const res = await fetch(`${API_BASE}/api/enrich`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ business_id: businessId }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Enrichment failed");
-  }
-  return res.json();
-}
-
 // --- React Query Hooks ---
 
 export function useJobs() {
@@ -78,12 +65,6 @@ export function useSearch() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
-  });
-}
-
-export function useEnrich() {
-  return useMutation({
-    mutationFn: postEnrich,
   });
 }
 

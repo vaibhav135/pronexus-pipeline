@@ -72,11 +72,18 @@ async def identify_owner(
             logger.info(f"Owner found via {source}: {name}")
             return name, source, website_data
 
-    # Step 2: Search fallback
-    from app.pipeline.search_fallback import search_for_owner
-    name, source = await search_for_owner(business_name, city, state)
-    if name:
-        return name, source, website_data
+    # Step 2: Search fallback — returns both owner and emails from search
+    from app.pipeline.search_fallback import search_for_owner_and_email
+    search_result = await search_for_owner_and_email(business_name, city, state)
+
+    # Attach search emails to website_data so they're not lost
+    if search_result.emails and website_data:
+        website_data.emails = search_result.emails
+    elif search_result.emails and not website_data:
+        website_data = WebsiteData(pages=[], combined_text="", emails=search_result.emails)
+
+    if search_result.owner_name:
+        return search_result.owner_name, search_result.owner_source, website_data
 
     logger.info(f"Owner not found for {business_name}")
     return None, None, website_data

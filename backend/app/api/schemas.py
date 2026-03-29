@@ -42,10 +42,6 @@ class SearchResponse(BaseModel):
     businesses: list[BusinessResponse]
 
 
-class EnrichRequest(BaseModel):
-    business_id: uuid.UUID
-
-
 class EnrichResponse(BaseModel):
     business_id: uuid.UUID
     business_name: str
