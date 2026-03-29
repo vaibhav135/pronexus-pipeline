@@ -44,11 +44,6 @@ export interface SearchResponse {
   businesses: Business[];
 }
 
-// Matches backend EnrichRequest
-export interface EnrichRequest {
-  business_id: string;
-}
-
 // Matches backend EnrichResponse
 export interface EnrichResponse {
   business_id: string;
@@ -94,14 +89,3 @@ export interface BusinessRow {
   enrichStatus: EnrichStatus;
 }
 
-// SSE event types from enrich-stream
-export interface SSEProgressEvent {
-  completed: number;
-  total: number;
-}
-
-export interface SSEErrorEvent {
-  business_id: string;
-  business_name: string;
-  error: string;
-}

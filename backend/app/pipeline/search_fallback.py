@@ -118,19 +118,6 @@ def _extract_from_search_text(
     return result
 
 
-async def search_for_owner(
-    business_name: str,
-    city: str | None = None,
-    state: str | None = None,
-) -> tuple[str | None, str | None]:
-    """
-    Search fallback for owner name only.
-    Returns (owner_name, source) or (None, None).
-    """
-    result = await search_for_owner_and_email(business_name, city, state)
-    return result.owner_name, result.owner_source
-
-
 async def search_for_owner_and_email(
     business_name: str,
     city: str | None = None,

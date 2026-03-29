@@ -1,6 +1,5 @@
 import json
 import uuid as uuid_mod
-from datetime import datetime, timezone
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
@@ -10,14 +9,13 @@ from sqlmodel import select, desc
 
 from app.api.schemas import (
     SearchRequest, SearchResponse, BusinessResponse,
-    EnrichRequest, EnrichResponse,
+    EnrichResponse,
     JobResponse, JobWithBusinessesResponse, BusinessWithEnrichment,
 )
 from app.database import get_session
 from app.models.db import Business, Owner, Email, ScrapeJob, utcnow
 from app.pipeline.discovery import fetch_google_maps_leads
 from app.pipeline.owner_id import identify_owner
-from app.pipeline.search_fallback import search_for_owner_and_email
 from app.pipeline.email_finder import find_email
 
 router = APIRouter()
@@ -111,115 +109,6 @@ async def search_businesses(req: SearchRequest):
     )
 
 
-@router.post("/enrich", response_model=EnrichResponse)
-async def enrich_business(req: EnrichRequest):
-    """
-    Enrich a business with owner name and email.
-
-    Pipeline:
-    1. Scrape website → extract owner name + emails
-    2. If missing → search fallback (Tavily → Exa) → extract both
-    3. If still missing email → Prospeo → Hunter
-    """
-    async with get_session() as session:
-        # Get business
-        result = await session.execute(
-            select(Business).where(Business.id == req.business_id)
-        )
-        biz = result.scalars().first()
-        if not biz:
-            raise HTTPException(status_code=404, detail="Business not found")
-
-        # Check if already enriched
-        owner_result = await session.execute(
-            select(Owner).where(Owner.business_id == biz.id)
-        )
-        existing_owner = owner_result.scalars().first()
-
-        email_result = await session.execute(
-            select(Email).where(Email.business_id == biz.id, Email.is_primary == True)
-        )
-        existing_email = email_result.scalars().first()
-
-        if existing_owner and existing_owner.name and existing_email:
-            return EnrichResponse(
-                business_id=biz.id,
-                business_name=biz.name,
-                owner_name=existing_owner.name,
-                owner_source=existing_owner.source,
-                email=existing_email.email,
-                email_type=existing_email.email_type,
-                email_source=existing_email.source,
-            )
-
-        # Step 1: Owner ID (scrapes website internally, returns website_data)
-        owner_name, owner_source, website_data = await identify_owner(
-            website_url=biz.website,
-            business_name=biz.name,
-            city=biz.city,
-            state=biz.state,
-        )
-
-        # Emails from website scrape
-        website_emails = website_data.emails if website_data else []
-
-        # Step 2: If missing owner or email, search fallback already ran in identify_owner
-        # But we need emails from search too
-        email_from_search = None
-        email_search_source = None
-        if not website_emails:
-            search_result = await search_for_owner_and_email(biz.name, biz.city, biz.state)
-            if not owner_name and search_result.owner_name:
-                owner_name = search_result.owner_name
-                owner_source = search_result.owner_source
-            if search_result.emails:
-                website_emails = search_result.emails
-                email_search_source = search_result.email_source
-
-        # Step 3: Email fallback (Prospeo → Hunter)
-        best_email, email_type, email_source = await find_email(
-            website_url=biz.website,
-            owner_name=owner_name,
-            existing_emails=website_emails,
-        )
-
-        # Use search source if email came from there
-        if email_source == "website" and email_search_source:
-            email_source = email_search_source
-
-        # Store owner
-        if owner_name and not existing_owner:
-            owner = Owner(
-                business_id=biz.id,
-                name=owner_name,
-                source=owner_source,
-                confidence="high" if owner_source and "website" in owner_source else "medium",
-            )
-            session.add(owner)
-
-        # Store email
-        if best_email and not existing_email:
-            email_record = Email(
-                business_id=biz.id,
-                email=best_email,
-                email_type=email_type,
-                source=email_source,
-                verification_status="unverified",
-                is_primary=True,
-            )
-            session.add(email_record)
-
-    return EnrichResponse(
-        business_id=biz.id,
-        business_name=biz.name,
-        owner_name=owner_name,
-        owner_source=owner_source,
-        email=best_email,
-        email_type=email_type,
-        email_source=email_source,
-    )
-
-
 @router.get("/jobs", response_model=list[JobResponse])
 async def list_jobs():
     """List all search jobs, most recent first."""
@@ -295,7 +184,7 @@ async def get_job(job_id: uuid_mod.UUID):
                     email=email.email if email else None,
                     email_type=email.email_type if email else None,
                     email_source=email.source if email else None,
-                    is_enriched=bool(owner and owner.name),
+                    is_enriched=bool(owner),
                 )
             )
 
@@ -350,16 +239,16 @@ async def enrich_stream(job_id: uuid_mod.UUID):
                     )
                     existing_email = email_result.scalars().first()
 
-                if existing_owner and existing_owner.name and existing_email:
-                    # Already enriched — send cached result
+                if existing_owner or existing_email:
+                    # Already been through the pipeline — send cached result
                     enriched = EnrichResponse(
                         business_id=biz.id,
                         business_name=biz.name,
-                        owner_name=existing_owner.name,
-                        owner_source=existing_owner.source,
-                        email=existing_email.email,
-                        email_type=existing_email.email_type,
-                        email_source=existing_email.source,
+                        owner_name=existing_owner.name if existing_owner else None,
+                        owner_source=existing_owner.source if existing_owner else None,
+                        email=existing_email.email if existing_email else None,
+                        email_type=existing_email.email_type if existing_email else None,
+                        email_source=existing_email.source if existing_email else None,
                     )
                 else:
                     # Run enrichment pipeline
@@ -370,18 +259,8 @@ async def enrich_stream(job_id: uuid_mod.UUID):
                         state=biz.state,
                     )
 
+                    # website_data now contains emails from both website scrape AND search fallback
                     website_emails = website_data.emails if website_data else []
-
-                    email_from_search = None
-                    email_search_source = None
-                    if not website_emails:
-                        search_result = await search_for_owner_and_email(biz.name, biz.city, biz.state)
-                        if not owner_name and search_result.owner_name:
-                            owner_name = search_result.owner_name
-                            owner_source = search_result.owner_source
-                        if search_result.emails:
-                            website_emails = search_result.emails
-                            email_search_source = search_result.email_source
 
                     best_email, email_type, email_source = await find_email(
                         website_url=biz.website,
@@ -389,21 +268,18 @@ async def enrich_stream(job_id: uuid_mod.UUID):
                         existing_emails=website_emails,
                     )
 
-                    if email_source == "website" and email_search_source:
-                        email_source = email_search_source
-
-                    # Store results
+                    # Store results — always create Owner row to mark enrichment attempted
                     async with get_session() as session:
-                        if owner_name and not existing_owner:
+                        if not existing_owner:
                             owner = Owner(
                                 business_id=biz.id,
                                 name=owner_name,
-                                source=owner_source,
-                                confidence="high" if owner_source and "website" in owner_source else "medium",
+                                source=owner_source if owner_name else "not_found",
+                                confidence="high" if owner_source and "website" in owner_source else "medium" if owner_name else "none",
                             )
                             session.add(owner)
 
-                        if best_email and not (existing_email):
+                        if best_email and not existing_email:
                             email_record = Email(
                                 business_id=biz.id,
                                 email=best_email,
