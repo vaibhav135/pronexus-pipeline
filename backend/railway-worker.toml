@@ -1,0 +1,5 @@
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "celery -A app.worker worker --loglevel=info --concurrency=1"
