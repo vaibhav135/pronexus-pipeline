@@ -2,7 +2,7 @@
 
 import { use, useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, CheckCircle2, RotateCcw, StopCircle, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResultsTable } from "@/components/results-table";
 import { ExportMenu } from "@/components/export-menu";
@@ -25,7 +25,7 @@ export default function SearchResultsPage({
   const cleanupRef = useRef<(() => void) | null>(null);
   const initializedRef = useRef(false);
 
-  // Load cached enrichment data from the API response
+  // Load cached enrichment data from the API response + start SSE if needed
   useEffect(() => {
     if (!data || initializedRef.current) return;
     initializedRef.current = true;
@@ -48,56 +48,42 @@ export default function SearchResultsPage({
           status: "enriched",
         };
       } else {
+        cached[item.business.id] = { data: null, status: "enriching" };
         hasUnenriched = true;
       }
     }
 
     setEnrichments(cached);
 
-    // Auto-start SSE only if there are unenriched businesses
+    // Connect SSE to watch for updates if enrichment is still in progress
     if (hasUnenriched) {
-      startSSE();
+      setEnriching(true);
+
+      const cleanup = subscribeToEnrichStream(
+        id,
+        (result) => {
+          setEnrichments((prev) => ({
+            ...prev,
+            [result.business_id]: { data: result, status: "enriched" },
+          }));
+        },
+        (completed, total) => {
+          setProgress({ completed, total });
+        },
+        (businessId) => {
+          setEnrichments((prev) => ({
+            ...prev,
+            [businessId]: { data: null, status: "failed" },
+          }));
+        },
+        () => {
+          setEnriching(false);
+        },
+      );
+
+      cleanupRef.current = cleanup;
     }
   }, [data, id]);
-
-  function startSSE() {
-    setEnriching(true);
-
-    // Mark unenriched rows as enriching
-    if (data) {
-      const pending: Record<string, { data: EnrichResponse | null; status: EnrichStatus }> = {};
-      for (const item of data.businesses) {
-        if (!item.is_enriched) {
-          pending[item.business.id] = { data: null, status: "enriching" };
-        }
-      }
-      setEnrichments((prev) => ({ ...prev, ...pending }));
-    }
-
-    const cleanup = subscribeToEnrichStream(
-      id,
-      (result) => {
-        setEnrichments((prev) => ({
-          ...prev,
-          [result.business_id]: { data: result, status: "enriched" },
-        }));
-      },
-      (completed, total) => {
-        setProgress({ completed, total });
-      },
-      (businessId) => {
-        setEnrichments((prev) => ({
-          ...prev,
-          [businessId]: { data: null, status: "failed" },
-        }));
-      },
-      () => {
-        setEnriching(false);
-      },
-    );
-
-    cleanupRef.current = cleanup;
-  }
 
   // Cleanup SSE on unmount
   useEffect(() => {
@@ -105,34 +91,6 @@ export default function SearchResultsPage({
       cleanupRef.current?.();
     };
   }, []);
-
-  function stopEnrich() {
-    cleanupRef.current?.();
-    cleanupRef.current = null;
-    setEnriching(false);
-    setEnrichments((prev) => {
-      const updated = { ...prev };
-      for (const [key, val] of Object.entries(updated)) {
-        if (val.status === "enriching") {
-          updated[key] = { data: null, status: "pending" };
-        }
-      }
-      return updated;
-    });
-  }
-
-  function retryFailed() {
-    setEnrichments((prev) => {
-      const updated = { ...prev };
-      for (const [key, val] of Object.entries(updated)) {
-        if (val.status === "failed") {
-          updated[key] = { data: null, status: "enriching" };
-        }
-      }
-      return updated;
-    });
-    startSSE();
-  }
 
   if (jobLoading) {
     return (
@@ -171,10 +129,9 @@ export default function SearchResultsPage({
   const failedCount = rows.filter(
     (r) => r.enrichStatus === "failed",
   ).length;
-  const allDone = enrichedCount + failedCount === rows.length && rows.length > 0;
 
   return (
-    <div className="flex flex-1 flex-col px-4 py-8 gap-6 max-w-7xl mx-auto w-full">
+    <div className="flex flex-1 flex-col py-8 gap-6 w-[80%] mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-start gap-3">
@@ -214,38 +171,7 @@ export default function SearchResultsPage({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {enriching ? (
-            <Button
-              onClick={stopEnrich}
-              variant="outline"
-              className="gap-2 border-error text-error hover:bg-error/10"
-            >
-              <StopCircle className="h-4 w-4" />
-              Stop
-            </Button>
-          ) : allDone ? (
-            failedCount > 0 && (
-              <Button
-                onClick={retryFailed}
-                variant="outline"
-                className="gap-2"
-              >
-                <RotateCcw className="h-4 w-4" />
-                Retry Failed
-              </Button>
-            )
-          ) : (
-            <Button
-              onClick={startSSE}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary-hover shadow-sm shadow-primary/20"
-            >
-              <Sparkles className="h-4 w-4" />
-              Enrich Remaining
-            </Button>
-          )}
-          <ExportMenu rows={rows} />
-        </div>
+        <ExportMenu rows={rows} />
       </div>
 
       {/* Results Table */}

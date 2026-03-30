@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid as uuid_mod
 from collections.abc import AsyncGenerator
@@ -15,15 +16,14 @@ from app.api.schemas import (
 from app.database import get_session
 from app.models.db import Business, Owner, Email, ScrapeJob, utcnow
 from app.pipeline.discovery import fetch_google_maps_leads
-from app.pipeline.owner_id import identify_owner
-from app.pipeline.email_finder import find_email
+from app.tasks.enrich import enrich_job
 
 router = APIRouter()
 
 
 @router.post("/search", response_model=SearchResponse)
 async def search_businesses(req: SearchRequest):
-    """Search Google Maps for businesses and store results."""
+    """Search Google Maps for businesses, store results, and kick off enrichment."""
     async with get_session() as session:
         # Create or get existing ScrapeJob
         result = await session.execute(
@@ -65,7 +65,6 @@ async def search_businesses(req: SearchRequest):
             biz = result.scalars().first()
 
             if biz:
-                # Update existing record
                 for key, value in lead.items():
                     if value is not None:
                         setattr(biz, key, value)
@@ -80,6 +79,9 @@ async def search_businesses(req: SearchRequest):
         # Update job status
         job.status = "completed"
         job.results_count = len(stored)
+
+    # Fire enrichment in background via Celery
+    enrich_job.delay(str(job.id))
 
     return SearchResponse(
         job_id=job.id,
@@ -203,11 +205,13 @@ async def get_job(job_id: uuid_mod.UUID):
 
 @router.get("/jobs/{job_id}/enrich-stream")
 async def enrich_stream(job_id: uuid_mod.UUID):
-    """SSE endpoint: enriches all businesses for a job, streaming results."""
+    """
+    SSE endpoint: streams enrichment progress by polling the DB.
+    The actual enrichment runs in a Celery worker — this just reads results.
+    """
 
     async def event_generator() -> AsyncGenerator[str, None]:
         async with get_session() as session:
-            # Get job
             result = await session.execute(
                 select(ScrapeJob).where(ScrapeJob.id == job_id)
             )
@@ -216,108 +220,67 @@ async def enrich_stream(job_id: uuid_mod.UUID):
                 yield f"event: error\ndata: {json.dumps({'message': 'Job not found'})}\n\n"
                 return
 
-            # Get businesses for this job
             biz_result = await session.execute(
                 select(Business).where(Business.search_query == job.search_query)
             )
             businesses = biz_result.scalars().all()
 
         total = len(businesses)
-        completed = 0
+        biz_ids = [b.id for b in businesses]
+        biz_names = {b.id: b.name for b in businesses}
+        sent: set[str] = set()
 
-        for biz in businesses:
-            try:
-                # Check if already enriched
-                async with get_session() as session:
-                    owner_result = await session.execute(
-                        select(Owner).where(Owner.business_id == biz.id)
+        while True:
+            # Poll DB for newly enriched businesses
+            async with get_session() as session:
+                owner_result = await session.execute(
+                    select(Owner).where(Owner.business_id.in_(biz_ids))
+                )
+                owners = {o.business_id: o for o in owner_result.scalars().all()}
+
+                email_result = await session.execute(
+                    select(Email).where(
+                        Email.business_id.in_(biz_ids),
+                        Email.is_primary == True,
                     )
-                    existing_owner = owner_result.scalars().first()
+                )
+                emails = {e.business_id: e for e in email_result.scalars().all()}
 
-                    email_result = await session.execute(
-                        select(Email).where(Email.business_id == biz.id, Email.is_primary == True)
-                    )
-                    existing_email = email_result.scalars().first()
+            # Stream any new results
+            for biz_id in biz_ids:
+                str_id = str(biz_id)
+                if str_id in sent:
+                    continue
 
-                if existing_owner or existing_email:
-                    # Already been through the pipeline — send cached result
-                    enriched = EnrichResponse(
-                        business_id=biz.id,
-                        business_name=biz.name,
-                        owner_name=existing_owner.name if existing_owner else None,
-                        owner_source=existing_owner.source if existing_owner else None,
-                        email=existing_email.email if existing_email else None,
-                        email_type=existing_email.email_type if existing_email else None,
-                        email_source=existing_email.source if existing_email else None,
-                    )
-                else:
-                    # Run enrichment pipeline
-                    owner_name, owner_source, website_data = await identify_owner(
-                        website_url=biz.website,
-                        business_name=biz.name,
-                        city=biz.city,
-                        state=biz.state,
-                    )
+                owner = owners.get(biz_id)
+                if not owner:
+                    continue  # not enriched yet
 
-                    # website_data now contains emails from both website scrape AND search fallback
-                    website_emails = website_data.emails if website_data else []
+                email = emails.get(biz_id)
 
-                    best_email, email_type, email_source = await find_email(
-                        website_url=biz.website,
-                        owner_name=owner_name,
-                        existing_emails=website_emails,
-                    )
-
-                    # Store results — always create Owner row to mark enrichment attempted
-                    async with get_session() as session:
-                        if not existing_owner:
-                            owner = Owner(
-                                business_id=biz.id,
-                                name=owner_name,
-                                source=owner_source if owner_name else "not_found",
-                                confidence="high" if owner_source and "website" in owner_source else "medium" if owner_name else "none",
-                            )
-                            session.add(owner)
-
-                        if best_email and not existing_email:
-                            email_record = Email(
-                                business_id=biz.id,
-                                email=best_email,
-                                email_type=email_type,
-                                source=email_source,
-                                verification_status="unverified",
-                                is_primary=True,
-                            )
-                            session.add(email_record)
-
-                    enriched = EnrichResponse(
-                        business_id=biz.id,
-                        business_name=biz.name,
-                        owner_name=owner_name,
-                        owner_source=owner_source,
-                        email=best_email,
-                        email_type=email_type,
-                        email_source=email_source,
-                    )
-
-                completed += 1
+                enriched = EnrichResponse(
+                    business_id=biz_id,
+                    business_name=biz_names[biz_id],
+                    owner_name=owner.name,
+                    owner_source=owner.source,
+                    email=email.email if email else None,
+                    email_type=email.email_type if email else None,
+                    email_source=email.source if email else None,
+                )
                 yield f"event: result\ndata: {enriched.model_dump_json()}\n\n"
-
-            except Exception as e:
-                completed += 1
-                logger.error(f"Enrichment failed for {biz.name}: {e}")
-                error_data = json.dumps({
-                    "business_id": str(biz.id),
-                    "business_name": biz.name,
-                    "error": str(e),
-                })
-                yield f"event: error\ndata: {error_data}\n\n"
+                sent.add(str_id)
 
             # Send progress
-            progress = json.dumps({"completed": completed, "total": total})
+            progress = json.dumps({"completed": len(sent), "total": total})
             yield f"event: progress\ndata: {progress}\n\n"
 
-        yield f"event: done\ndata: {json.dumps({'message': 'All enrichments complete'})}\n\n"
+            # All done?
+            if len(sent) == total:
+                yield f"event: done\ndata: {json.dumps({'message': 'All enrichments complete'})}\n\n"
+                return
+
+            # Poll interval
+            await asyncio.sleep(3)
 
     return StreamingResponse(
         event_generator(),
