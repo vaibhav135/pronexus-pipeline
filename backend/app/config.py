@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Facebook supplement
     apify_token: str = ""
 
+    # Redis (Celery broker)
+    redis_url: str = "redis://localhost:6379/0"
+
     # CORS
     cors_origins: str = "http://localhost:3000"
 
